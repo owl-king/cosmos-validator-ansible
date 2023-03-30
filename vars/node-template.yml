@@ -1,0 +1,5 @@
+---
+node_name: 
+sync_style: state-sync
+passphrase: 
+local_junod_key_path: /tmp/junod_key

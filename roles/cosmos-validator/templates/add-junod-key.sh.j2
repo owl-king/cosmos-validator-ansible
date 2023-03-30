@@ -1,0 +1,8 @@
+#!/usr/bin/expect
+
+spawn junod keys add junokey --keyring-backend file
+expect "Enter keyring passphrase:"
+send -- "{{ passphrase }}\n"
+expect "Re-enter keyring passphrase:"
+send -- "{{ passphrase }}\n"
+expect eof

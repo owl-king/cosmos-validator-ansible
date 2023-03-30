@@ -1,0 +1,9 @@
+---
+- name: Install cosmos validator node
+  hosts: gcp 
+  vars_files:
+    - vars/all.yml
+    - vars/gcp-node1.yml
+  roles:
+    - common
+    - cosmos-validator

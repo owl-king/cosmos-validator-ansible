@@ -1,0 +1,209 @@
+---
+- include_tasks: dependencies.yml
+
+- name: Add cosmos user
+  become_method: sudo
+  become: yes
+  user:
+    name: "{{ user }}"
+    shell: /bin/bash
+    createhome: yes
+
+- name: Add the new user to sudoers
+  become_method: sudo
+  become: yes
+  lineinfile:
+    path: /etc/sudoers
+    line: "{{ user }} ALL=(ALL) NOPASSWD:ALL"
+    state: present
+    validate: "visudo -cf %s"
+
+
+- name: Set up Go environment variables
+  become: true
+  become_user: "{{ user }}"
+  lineinfile:
+    path: ~/.profile
+    line: "export {{ item }}"
+  with_items:
+    - "GOROOT=/usr/local/go"
+    - "GOPATH=~/go"
+    - "PATH=$PATH:$GOROOT/bin:$GOPATH/bin"
+
+- name: Clone CosmosContracts Juno repository
+  become: true
+  become_user: "{{ user }}"
+  git:
+    repo: https://github.com/CosmosContracts/juno
+    dest: "{{ home_dir }}/juno"
+    version: v13.0.0-beta.1
+    update: yes
+    clone: yes
+
+- name: Install Juno dependencies
+  become: true
+  become_user: "{{ user }}"
+  shell: |
+    . ~/.profile
+    make install
+  args:
+    chdir: "{{ home_dir }}/juno"
+
+- name: Build Juno
+  become: true
+  become_user: "{{ user }}"
+  shell: |
+    . ~/.profile
+    make 
+  args:
+    chdir: "{{ home_dir }}/juno"
+
+- name: Get current hostname
+  shell: |
+    hostname
+  register:
+    hostname
+
+- name: Add MONIKER_JUNOX and HOST environment variables to user profile
+  become: true
+  become_user: "{{ user }}"
+  lineinfile:
+    path: "{{ home_dir }}/.profile"
+    line: "export {{ item }}"
+    state: present
+  with_items:
+    - "MONIKER_JUNOX={{ node_name }}"
+    - "HOST={{ hostname.stdout }}"
+
+- name: Install new genesis
+  become: true
+  become_user: "{{ user }}"
+  shell: |
+    . ~/.profile
+
+    junod init $MONIKER_JUNOX --chain-id uni-6
+    wget -O genesis.json https://snapshots.polkachu.com/testnet-genesis/juno/genesis.json --inet4-only
+    rm -r ~/.juno/config/genesis.json && mv genesis.json ~/.juno/config
+
+- name: Update sync config
+  become: true
+  become_user: "{{ user }}"
+  when: sync_style == "state-sync"
+  script: ./files/state-sync.sh
+
+- name: Update config persistent peers
+  become: true
+  become_user: "{{ user }}"
+  script: ./files/update-peers.sh
+
+- name: Update config minimum gas prices
+  become: true
+  become_user: "{{ user }}"
+  script: ./files/update-gas-prices.sh
+
+- name: Install cosmosvisor
+  become: true
+  become_user: "{{ user }}"
+  shell: |
+    . ~/.profile
+    go install github.com/cosmos/cosmos-sdk/cosmovisor/cmd/cosmovisor@v1.0.0
+
+- name: Add DAEMON_NAME, DAEMON_HOME, DAEMON_DATA_BACKUP_DIR environment variables to user profile
+  become: true
+  become_user: "{{ user }}"
+  lineinfile:
+    path: "{{ home_dir }}/.profile"
+    line: "export {{ item }}"
+    state: present
+  with_items:
+    - "DAEMON_NAME=junod"
+    - "DAEMON_HOME=$HOME/.juno"
+    - "DAEMON_DATA_BACKUP_DIR=/root/backups"
+
+- name: Create DAEMON dirs
+  become: true
+  become_user: "{{ user }}"
+  file:
+    path: "{{ item }}"
+    state: directory
+  loop:
+    - "~/.juno/cosmovisor/genesis/bin"
+    - "~/.juno/cosmovisor/upgrades"
+
+- name: Add junod to genesis-bin
+  become: true
+  become_user: "{{ user }}"
+  shell: |
+    . ~/.profile
+    BIN_DIR="~/.juno/cosmovisor/genesis/bin/junod"
+    if [[ -z $BIN_DIR ]]; then
+      cp $(which junod) $BIN_DIR
+    fi
+
+- name: Copy junoval.service file to /etc/systemd/system
+  become: true
+  become_user: "root"
+  template:
+    src: ./templates/junoval.service.j2
+    dest: /etc/systemd/system/junoval.service
+
+- name: Reload systemd configuration
+  become: true
+  become_user: "root"
+  systemd:
+    daemon_reload: yes
+
+- name: Enable and start junoval.service
+  become: true
+  become_user: "root"
+  systemd:
+    name: junoval.service
+    state: started
+    enabled: yes
+
+- name: Change client.toml config
+  become: true
+  become_user: "{{ user }}"
+  script: ./files/config-client-toml.sh
+
+- name: Copy add-junod-key.sh to node
+  become: true
+  become_user: "{{ user }}"
+  template:
+    src: ./templates/add-junod-key.sh.j2
+    dest: /tmp/add-junod-key.sh
+    mode: '0700'
+
+- name: Add junod key
+  become: true
+  become_user: "{{ user }}"
+  shell: |
+    . ~/.profile
+    /tmp/add-junod-key.sh
+  register: junod_key
+
+- name: Save the junod key to our local machine
+  local_action: 
+    module: copy 
+    content: "{{ junod_key.stdout }}"
+    dest: "{{ local_junod_key_path }}"
+
+#- name: Show the key
+  #debug:
+    #var: junod_key.stdout
+
+- name: Copy create-validator.sh to node
+  become: true
+  become_user: "{{ user }}"
+  template:
+    src: ./templates/create-validator.sh.j2
+    dest: /tmp/create-validator.sh
+    mode: '0700'
+
+- name: Create a validator
+  become: true
+  become_user: "{{ user }}"
+  shell: |
+    . ~/.profile
+    export VALIDATOR=`junod tendermint show-validator`
+    /tmp/create-validator.sh

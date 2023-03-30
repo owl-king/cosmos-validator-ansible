@@ -1,0 +1,16 @@
+#!/usr/bin/expect
+spawn junod tx staking create-validator \
+	--from=junokey \
+	--amount=1000000ujunox \
+	--moniker=$env(MONIKER_JUNOX) \
+	--chain-id=uni-6\
+	--commission-rate=0.05 \
+	--commission-max-rate=0.5 \
+	--commission-max-change-rate=0.1 \
+	--min-self-delegation=1 \
+	--fees=500ujunox \
+	--pubkey=$env(VALIDATOR) \
+	--keyring-backend file
+expect "Enter keyring passphrase:"
+send -- "{{ passphrase }}\n"
+expect eof
